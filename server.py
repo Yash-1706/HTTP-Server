@@ -6,6 +6,7 @@ import mimetypes
 import queue
 import uuid
 import json
+import argparse 
 
 HOST = "127.0.0.1"
 PORT = 8080
@@ -37,6 +38,17 @@ def ensure_upload_dir():
     upload_dir = os.path.join(RESOURCE_DIR, "uploads")
     os.makedirs(upload_dir, exist_ok=True)
     return upload_dir
+
+def parse_arguments():
+    """
+    Parse command line arguments for server configuration.
+    """
+    parser = argparse.ArgumentParser(description="Multi-threaded HTTP Server")
+    parser.add_argument("--host", default="127.0.0.1", help="Host to bind the server (default: 127.0.0.1)")
+    parser.add_argument("--port", type=int, default=8080, help="Port to bind the server (default:8080)")
+    parser.add_argument("--threads", type=int, default=10, help="Maximum number of worker threads (default: 10)")
+    parser.add_argument("--resource-dir", default="resources", help="Directory to serve static files from (default: resources)")
+    return parser.parse_args()
     
 
 def parse_headers(header_lines):
@@ -276,5 +288,12 @@ def start_server():
                 log(f"Queued connection from {addr}, queue size: {CONNECTION_QUEUE.qsize()}")
 
 if __name__ == "__main__":
+    args = parse_arguments()
+    
+    HOST = args.host
+    PORT = args.port
+    MAX_THREADS = args.threads
+    RESOURCE_DIR = args.resource_dir
+    
     os.makedirs(os.path.join(RESOURCE_DIR, "uploads"), exist_ok=True)
     start_server()
