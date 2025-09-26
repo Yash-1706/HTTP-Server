@@ -30,6 +30,15 @@ def make_upload_filename():
     rand = uuid.uuid4().hex[:8]
     return f"upload_{ts}_{rand}.json"
 
+def ensure_upload_dir():
+    """
+    Ensure the uploads directory exists and return its path.
+    """
+    upload_dir = os.path.join(RESOURCE_DIR, "uploads")
+    os.makedirs(upload_dir, exist_ok=True)
+    return upload_dir
+    
+
 def parse_headers(header_lines):
     """
     header_lines: list of header lines (after request line).
@@ -44,7 +53,7 @@ def parse_headers(header_lines):
             key = parts[0].strip().lower()
             val = parts[1].strip()
             headers[key] = val
-        return headers
+    return headers
     
 def recv_all_body(conn, initial_body, content_length):
     """
