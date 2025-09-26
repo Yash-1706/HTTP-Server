@@ -1,7 +1,7 @@
 import socket
 import threading 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 import mimetypes 
 import queue
 import uuid
@@ -30,6 +30,12 @@ def make_upload_filename():
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     rand = uuid.uuid4().hex[:8]
     return f"upload_{ts}_{rand}.json"
+
+def get_http_date():
+    """
+    Get current time in HTTP date format (RFC 7231).
+    """
+    return datetime.now(timezone.utc).strftime('%a, %d %b %Y %H:%M:%S GMT')
 
 def ensure_upload_dir():
     """
@@ -190,7 +196,7 @@ def handle_client(conn, addr):
                 return
             
             if not os.path.exists(file_path):
-                response = "HTTP/1.1 404 Not Found\r\n\r\n 404 Not Found"
+                response = "HTTP/1.1 404 Not Found\r\n\r\n404 Not Found"
                 conn.sendall(response.encode())
                 return
             
@@ -214,7 +220,8 @@ def handle_client(conn, addr):
                     "HTTP/1.1 200 OK",
                     f"Content-Type: {content_type}",
                     f"Content-Length: {len(file_data)}",
-                    "Server: Multi-threaded HTTP Server",
+                    f"Date: {get_http_date()}",
+                    "Server: Multi-threaded HTTP Server/1.0",
                     "Connection: close"
                 ]
                 
@@ -302,9 +309,11 @@ def handle_client(conn, addr):
                     "HTTP/1.1 201 Created",
                     "Content-Type: application/json",
                     f"Content-Length: {len(resp_body)}",
-                    "Server: Multi-threaded HTTP Server",
+                    f"Date: {get_http_date()}",
+                    "Server: Multi-threaded HTTP Server/1.0",
                     "Connection: close"
                 ]
+                
                 header_str = "\r\n".join(headers_out) + "\r\n\r\n"
                 conn.sendall(header_str.encode() + resp_body)
                 log(f"[Thread-{threading.current_thread().name}] Saved upload: {filepath}")
