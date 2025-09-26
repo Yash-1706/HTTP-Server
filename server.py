@@ -81,6 +81,46 @@ def recv_all_body(conn, initial_body, content_length):
         to_read -= len(chunk)
     return body
 
+def is_safe_path(path, resource_dir):
+    """
+    Check if the requested is safe and doesn't contain path traversal attempts.
+    Returns (is_safe: bool, normalized_path: str)
+    """
+    
+    if '?' in path:
+        path = path.split('?')[0]
+        
+    normalized = os.path.normpath(path.lstrip('/'))
+    
+    if '..' in normalized or normalized.startswith('/') or ':' in normalized:
+        return False, None
+    
+    full_path = os.path.join(resource_dir, normalized)
+    
+    try:
+        real_resource = os.path.realpath(resource_dir)
+        real_requested = os.path.realpath(full_path)
+        if not real_requested.startswith(real_resource):
+            return False, None
+    except:
+        return False, None
+    
+    return True, full_path
+
+def validate_host_header(headers, expected_host, expected_port):
+    """
+    Validate the Host header to prevent Host header injection attacks.
+    """
+    host_header = headers.get('host')
+    if not host_header:
+        return True
+    
+    expected_hosts = [
+        f"{expected_host}:{expected_port}",
+        expected_host if expected_port == 80 else f"{expected_host}:{expected_port}"
+    ]
+    
+    return host_header in expected_hosts
 
 def handle_client(conn, addr):
     try:
@@ -134,44 +174,71 @@ def handle_client(conn, addr):
             return
 
         if method == "GET":
+            if not validate_host_header(headers, HOST, PORT):
+                response = "HTTP/1.1 400 Bad Request\r\n\r\n400 Bad Request: Invalid Host header"
+                conn.sendall(response.encode())
+                return
+            
             if path == "/":
                 path = "/index.html"
-            file_path = os.path.join(RESOURCE_DIR, path.lstrip("/"))
-
+                
+            is_safe, file_path = is_safe_path(path, RESOURCE_DIR)
+            if not is_safe:
+                log(f"[Thread-{threading.current_thread().name}] Path traversal attempt blocked: {path}")
+                response = "HTTP/1.1 403 Forbidden\r\n\r\n403 Forbidden: Access Denied"
+                conn.sendall(response.encode())
+                return
+            
             if not os.path.exists(file_path):
-                response = "HTTP/1.1 404 Not Found\r\n\r\n404 Not Found"
+                response = "HTTP/1.1 404 Not Found\r\n\r\n 404 Not Found"
                 conn.sendall(response.encode())
                 return
-
-            content_type, is_binary = get_content_type(file_path)
-            if content_type is None:
-                response = "HTTP/1.1 415 Unsupported Media Type\r\n\r\n415 Unsupported Media Type"
+            
+            try:
+                content_type, is_binary = get_content_type(file_path)
+                if content_type is None:
+                    response = "HTTP/1.1 415 Unsupported Media Type\r\n\r\n415 Unsupported Media Type"
+                    conn.sendall(response.encode())
+                    return
+                
+                mode = "rb" if is_binary else "r"
+                encoding = None if is_binary else "utf-8"
+                
+                with open(file_path, mode, encoding=encoding) as f:
+                    file_data = f.read()
+                    
+                if not is_binary:
+                    file_data = file_data.encode("utf-8")
+                    
+                headers_out = [
+                    "HTTP/1.1 200 OK",
+                    f"Content-Type: {content_type}",
+                    f"Content-Length: {len(file_data)}",
+                    "Server: Multi-threaded HTTP Server",
+                    "Connection: close"
+                ]
+                
+                if is_binary:
+                    filename = os.path.basename(file_path)
+                    headers_out.append(f'Content-Disposition: attachment; filename="{filename}"')
+            
+                header_str = "\r\n".join(headers_out) + "\r\n\r\n"
+                conn.sendall(header_str.encode() + file_data)
+                log(f"[Thread-{threading.current_thread().name}] Served: {file_path}")
+                return
+            
+            except Exception as e:
+                log(f"[Thread-{threading.current_thread().name}] File read error: {e}")
+                response = "HTTP/1.1 500 Internal Server Error\r\n\r\n500 Internal Server Error"
                 conn.sendall(response.encode())
                 return
-
-            mode = "rb" if is_binary else "r"
-            with open(file_path, mode) as f:
-                body = f.read()
-
-            if not is_binary:
-                body = body.encode("utf-8")
-
-            headers_out = [
-                "HTTP/1.1 200 OK",
-                f"Content-Type: {content_type}",
-                f"Content-Length: {len(body)}",
-                "Connection: close",
-                "Server: Multi-threaded HTTP Server",
-            ]
-            if is_binary:
-                filename = os.path.basename(file_path)
-                headers_out.append(f'Content-Disposition: attachment; filename="{filename}"')
-
-            header_str = "\r\n".join(headers_out) + "\r\n\r\n"
-            conn.sendall(header_str.encode() + body)
-            return
-
+            
         if method == "POST":
+            if not validate_host_header(headers, HOST, PORT):
+                response = "HTTP/1.1 400 Bad Request\r\n\r\n400 Bad Request: Invalid Host header"
+                conn.sendall(response.encode())
+                return
+            
             if path != "/upload":
                 response = "HTTP/1.1 404 Not Found\r\n\r\n404 Not Found"
                 conn.sendall(response.encode())
@@ -281,7 +348,7 @@ def start_server():
             conn, addr = server_socket.accept()
             if CONNECTION_QUEUE.qsize() >= 50:
                 log("Warning: Connection queue full, rejecting request")
-                conn.sendall(b"HTTP/1.1 503 Service Unavaliable\r\nRetry-After: 5\r\n\r\n")
+                conn.sendall(b"HTTP/1.1 503 Service Unavailable\r\nRetry-After: 5\r\n\r\n")
                 conn.close()
             else:
                 CONNECTION_QUEUE.put((conn,addr))
