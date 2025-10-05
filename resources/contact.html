@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Contact - Multi-threaded HTTP Server</title>
+    <meta charset="utf-8">
+</head>
+
+<body>
+    <h1>Contact Information</h1>
+    <nav>
+        <a href="/">Home</a> |
+        <a href="/about.html">About</a>
+    </nav>
+    <p>For questions about this HTTP server implementation:</p>
+    <ul>
+        <li>Built for Computer Networks assignment</li>
+        <li>Supports HTTP/1.1 protocol</li>
+        <li>Test JSON uploads to /upload endpoint</li>
+    </ul>
+    <h2>Test JSON Upload:</h2>
+    <pre>
+POST /upload HTTP/1.1
+Host: localhost:8080
+Content-Type: application/json
+
+{"message": "Hello Server", "timestamp": "2024-10-05"}
+    </pre>
+</body>
+
+</html>

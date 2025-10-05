@@ -1,0 +1,19 @@
+Multi-threaded HTTP Server Test File
+=====================================
+
+This is a sample text file for testing binary file download functionality.
+
+Features tested:
+- Binary file transfer
+- Content-Disposition header
+- application/octet-stream content type
+
+The server should serve this file as a download rather than displaying it in the browser.
+
+File size: approximately 500+ bytes
+Created: October 2025
+Purpose: Testing HTTP server binary download capability
+
+Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor 
+incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis 
+nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. 

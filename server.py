@@ -10,7 +10,7 @@ import sys
 import time
 import signal
 
-# Global configuration
+# Server configuration
 HOST = "127.0.0.1"
 PORT = 8080
 RESOURCE_DIR = "resources"
@@ -20,14 +20,12 @@ ACTIVE_THREADS = 0
 THREAD_LOCK = threading.Lock()
 SERVER_RUNNING = True
 
-# Logs messages with timestamp in standardized format
 def log(message):
-    """Log message with timestamp"""
+    """Log with timestamp"""
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}")
     
-# Determines content type and binary flag based on file extension
 def get_content_type(file_path):
-    """Determine content type and whether file should be binary download"""
+    """Get content type and binary flag for file extension"""
     ext = os.path.splitext(file_path)[1].lower()
     if ext == ".html":
         return "text/html; charset=utf-8", False
@@ -36,28 +34,24 @@ def get_content_type(file_path):
     else: 
         return None, None
     
-# Creates unique filename for uploaded files using timestamp and random ID
 def make_upload_filename():
     """Generate unique filename for uploads"""
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     rand = uuid.uuid4().hex[:8]
     return f"upload_{ts}_{rand}.json"
 
-# Formats current timestamp as RFC 7231 compliant HTTP date header
 def get_http_date():
-    """Get current time in HTTP date format (RFC 7231)"""
+    """Get current time in HTTP date format"""
     return datetime.now(timezone.utc).strftime('%a, %d %b %Y %H:%M:%S GMT')
 
-# Creates uploads directory if it doesn't exist and returns its path
 def ensure_upload_dir():
-    """Ensure the uploads directory exists and return its path"""
+    """Create uploads directory if needed"""
     upload_dir = os.path.join(RESOURCE_DIR, "uploads")
     os.makedirs(upload_dir, exist_ok=True)
     return upload_dir
 
-# Parses HTTP header lines into dictionary with lowercase keys
 def parse_headers(header_lines):
-    """Parse HTTP headers into dictionary with lowercase keys"""
+    """Parse HTTP headers into dictionary"""
     headers = {}
     for line in header_lines:
         if not line.strip():
@@ -69,9 +63,8 @@ def parse_headers(header_lines):
             headers[key] = val
     return headers
     
-# Reads exact number of bytes from connection to complete request body
 def recv_all_body(conn, initial_body, content_length):
-    """Read exactly content_length bytes from connection"""
+    """Read exact number of bytes for request body"""
     body = initial_body
     to_read = content_length - len(body)
     while to_read > 0:
@@ -82,11 +75,10 @@ def recv_all_body(conn, initial_body, content_length):
         to_read -= len(chunk)
     return body
 
-# Receives and parses complete HTTP request including headers and body
 def recv_request(conn):
-    """Receive and parse a complete HTTP request"""
+    """Receive and parse complete HTTP request"""
     data = b""
-    # Read until we have complete headers
+    # Read until complete headers
     while b"\r\n\r\n" not in data and len(data) < 8192:
         chunk = conn.recv(8192 - len(data))
         if not chunk:
@@ -122,9 +114,8 @@ def recv_request(conn):
     
     return request_line, headers, body, lines[0]
 
-# Validates requested path is safe and prevents directory traversal attacks
 def is_safe_path(path, resource_dir):
-    """Check if path is safe from traversal attacks"""
+    """Validate path to prevent directory traversal"""
     # Remove query string
     if '?' in path:
         path = path.split('?')[0]
@@ -156,9 +147,8 @@ def is_safe_path(path, resource_dir):
     
     return True, full_path
 
-# Validates Host header to prevent injection attacks and ensure proper routing
 def validate_host_header(headers, expected_host, expected_port):
-    """Validate Host header to prevent injection attacks"""
+    """Validate Host header for security"""
     host_header = headers.get('host')
     if not host_header:
         return False  # Host header required
@@ -180,9 +170,8 @@ def validate_host_header(headers, expected_host, expected_port):
     log(f"[Thread-{threading.current_thread().name}] Host validation: {host_header} {'✓' if is_valid else '✗'}")
     return is_valid
 
-# Determines whether to keep connection alive based on HTTP version and headers
 def should_keep_alive(headers, version):
-    """Determine if connection should be kept alive"""
+    """Check if connection should stay alive"""
     connection = headers.get('connection', '').lower()
     
     if version == "HTTP/1.1":
@@ -192,9 +181,12 @@ def should_keep_alive(headers, version):
         # HTTP/1.0 defaults to close
         return connection == 'keep-alive'
 
-# Handles GET requests for serving static files with security validation
 def handle_get_request(conn, path, headers):
-    """Handle GET request"""
+    """Handle GET requests for static files"""
+    # Remove query parameters from path
+    if '?' in path:
+        path = path.split('?')[0]
+    
     # Default to index.html for root
     if path == "/":
         path = "/index.html"
@@ -238,9 +230,8 @@ def handle_get_request(conn, path, headers):
         log(f"[Thread-{threading.current_thread().name}] File read error: {e}")
         return 500, "Internal Server Error", b"500 Internal Server Error"
 
-# Handles POST requests for JSON file uploads to uploads directory
 def handle_post_request(conn, path, headers, body):
-    """Handle POST request"""
+    """Handle POST requests for JSON uploads"""
     # Only accept /upload endpoint
     if path != "/upload":
         return 404, "Not Found", b"404 Not Found"
@@ -282,9 +273,8 @@ def handle_post_request(conn, path, headers, body):
         log(f"[Thread-{threading.current_thread().name}] File write error: {e}")
         return 500, "Internal Server Error", b"500 Internal Server Error"
 
-# Sends HTTP response with proper headers including Keep-Alive support
 def send_response(conn, status_code, status_text, body, content_type=None, extra_headers=None, keep_alive=False):
-    """Send HTTP response"""
+    """Send HTTP response with proper headers"""
     headers = [
         f"HTTP/1.1 {status_code} {status_text}",
         f"Content-Length: {len(body)}",
@@ -312,7 +302,6 @@ def send_response(conn, status_code, status_text, body, content_type=None, extra
     
     log(f"[Thread-{threading.current_thread().name}] Response: {status_code} {status_text} ({len(body)} bytes transferred)")
 
-# Handles client connections with Keep-Alive support and request processing
 def handle_client(conn, addr):
     """Handle client connection with keep-alive support"""
     global ACTIVE_THREADS
@@ -410,9 +399,8 @@ def handle_client(conn, addr):
         except:
             pass
 
-# Worker thread function that processes client connections from queue
 def worker():
-    """Worker thread function"""
+    """Worker thread function to process connections"""
     while SERVER_RUNNING:
         try:
             conn, addr = CONNECTION_QUEUE.get(timeout=1)
@@ -425,9 +413,8 @@ def worker():
         except Exception as e:
             log(f"Worker thread error: {e}")
 
-# Handles shutdown signals for graceful server termination
 def signal_handler(signum, frame):
-    """Handle shutdown signals"""
+    """Handle shutdown signals gracefully"""
     global SERVER_RUNNING
     log("\nShutting down server...")
     SERVER_RUNNING = False
@@ -436,7 +423,6 @@ def signal_handler(signum, frame):
         CONNECTION_QUEUE.put((None, None))
     sys.exit(0)
 
-# Starts the HTTP server with socket binding and thread pool initialization
 def start_server():
     """Start the HTTP server"""
     global SERVER_RUNNING
@@ -480,8 +466,8 @@ def start_server():
                     conn.close()
                 else:
                     CONNECTION_QUEUE.put((conn, addr))
-                    if CONNECTION_QUEUE.qsize() > 10:
-                        log(f"Connection dequeued, assigned to Thread-{threading.current_thread().name}")
+                    if CONNECTION_QUEUE.qsize() > 5:
+                        log(f"Connection dequeued, assigned to Thread-{threading.active_count()}")
                         
             except socket.timeout:
                 continue
