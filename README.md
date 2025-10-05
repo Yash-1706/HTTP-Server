@@ -87,7 +87,3 @@ project/
 ✅ Complete HTTP error handling  
 ✅ Comprehensive logging  
 ✅ Binary file transfer capability
-
-## Author
-
-Built for Computer Networks assignment - October 2025
