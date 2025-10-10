@@ -15,7 +15,8 @@ HOST = "127.0.0.1"
 PORT = 8080
 RESOURCE_DIR = "resources"
 MAX_THREADS = 10
-CONNECTION_QUEUE = queue.Queue()
+QUEUE_MAX_SIZE = 100
+CONNECTION_QUEUE = queue.Queue(maxsize=QUEUE_MAX_SIZE)
 ACTIVE_THREADS = 0
 THREAD_LOCK = threading.Lock()
 SERVER_RUNNING = True
@@ -186,60 +187,93 @@ def handle_get_request(conn, path, headers):
     # Remove query parameters from path
     if '?' in path:
         path = path.split('?')[0]
-    
+
     # Default to index.html for root
     if path == "/":
         path = "/index.html"
-    
+
     # Security check
     is_safe, file_path = is_safe_path(path, RESOURCE_DIR)
     if not is_safe:
         log(f"[Thread-{threading.current_thread().name}] Security violation: Path traversal attempt - {path}")
-        return 403, "Forbidden", b"403 Forbidden: Access Denied"
-    
+        return {
+            "status": 403,
+            "text": "Forbidden",
+            "body": b"403 Forbidden: Access Denied"
+        }
+
     # Check file exists
     if not os.path.exists(file_path) or not os.path.isfile(file_path):
-        return 404, "Not Found", b"404 Not Found"
-    
+        return {
+            "status": 404,
+            "text": "Not Found",
+            "body": b"404 Not Found"
+        }
+
     # Check content type
     content_type, is_binary = get_content_type(file_path)
     if content_type is None:
-        return 415, "Unsupported Media Type", b"415 Unsupported Media Type"
-    
+        return {
+            "status": 415,
+            "text": "Unsupported Media Type",
+            "body": b"415 Unsupported Media Type"
+        }
+
     try:
-        # Read file
-        with open(file_path, "rb") as f:
-            file_data = f.read()
-        
-        # Log file transfer
-        file_size = len(file_data)
+        file_size = os.path.getsize(file_path)
         file_name = os.path.basename(file_path)
-        if is_binary:
-            log(f"[Thread-{threading.current_thread().name}] Sending binary file: {file_name} ({file_size} bytes)")
-        else:
-            log(f"[Thread-{threading.current_thread().name}] Serving HTML: {file_name} ({file_size} bytes)")
-        
-        # Prepare response with appropriate headers
         extra_headers = []
+
         if is_binary:
             extra_headers.append(f'Content-Disposition: attachment; filename="{file_name}"')
-        
-        return 200, "OK", file_data, content_type, extra_headers
-        
+            log(f"[Thread-{threading.current_thread().name}] Sending binary file: {file_name} ({file_size} bytes)")
+            return {
+                "status": 200,
+                "text": "OK",
+                "body": None,
+                "content_type": content_type,
+                "extra_headers": extra_headers,
+                "file_path": file_path
+            }
+
+        with open(file_path, "rb") as f:
+            file_data = f.read()
+
+        log(f"[Thread-{threading.current_thread().name}] Serving HTML: {file_name} ({file_size} bytes)")
+        return {
+            "status": 200,
+            "text": "OK",
+            "body": file_data,
+            "content_type": content_type,
+            "extra_headers": extra_headers
+        }
+
     except Exception as e:
         log(f"[Thread-{threading.current_thread().name}] File read error: {e}")
-        return 500, "Internal Server Error", b"500 Internal Server Error"
+        return {
+            "status": 500,
+            "text": "Internal Server Error",
+            "body": b"500 Internal Server Error"
+        }
 
 def handle_post_request(conn, path, headers, body):
     """Handle POST requests for JSON uploads"""
     # Only accept /upload endpoint
     if path != "/upload":
-        return 404, "Not Found", b"404 Not Found"
+        return {
+            "status": 404,
+            "text": "Not Found",
+            "body": b"404 Not Found"
+        }
     
     # Check content type
     content_type_header = headers.get("content-type", "")
     if not content_type_header.lower().startswith("application/json"):
-        return 415, "Unsupported Media Type", b"415 Unsupported Media Type: Expected application/json"
+        return {
+            "status": 415,
+            "text": "Unsupported Media Type",
+            "body": b"415 Unsupported Media Type: Expected application/json"
+        }
     
     # Parse JSON
     try:
@@ -247,7 +281,11 @@ def handle_post_request(conn, path, headers, body):
         parsed = json.loads(json_text)
     except Exception as e:
         log(f"[Thread-{threading.current_thread().name}] JSON parse error: {e}")
-        return 400, "Bad Request", b"400 Bad Request: Invalid JSON"
+        return {
+            "status": 400,
+            "text": "Bad Request",
+            "body": b"400 Bad Request: Invalid JSON"
+        }
     
     # Save to file
     try:
@@ -267,40 +305,75 @@ def handle_post_request(conn, path, headers, body):
         resp_body = json.dumps(resp_body_obj).encode("utf-8")
         
         log(f"[Thread-{threading.current_thread().name}] Created file: {filename}")
-        return 201, "Created", resp_body, "application/json", []
+        return {
+            "status": 201,
+            "text": "Created",
+            "body": resp_body,
+            "content_type": "application/json",
+            "extra_headers": []
+        }
         
     except Exception as e:
         log(f"[Thread-{threading.current_thread().name}] File write error: {e}")
-        return 500, "Internal Server Error", b"500 Internal Server Error"
+        return {
+            "status": 500,
+            "text": "Internal Server Error",
+            "body": b"500 Internal Server Error"
+        }
 
-def send_response(conn, status_code, status_text, body, content_type=None, extra_headers=None, keep_alive=False):
-    """Send HTTP response with proper headers"""
+def send_response(conn, status_code, status_text, body=b"", content_type=None, extra_headers=None, keep_alive=False, file_path=None):
+    """Send HTTP response with proper headers, optionally streaming file content."""
+    if file_path is not None:
+        try:
+            body_length = os.path.getsize(file_path)
+        except OSError as exc:
+            log(f"[Thread-{threading.current_thread().name}] File size error: {exc}")
+            body = b"500 Internal Server Error"
+            status_code = 500
+            status_text = "Internal Server Error"
+            file_path = None
+            body_length = len(body)
+    else:
+        if body is None:
+            body = b""
+        body_length = len(body)
+
     headers = [
         f"HTTP/1.1 {status_code} {status_text}",
-        f"Content-Length: {len(body)}",
+        f"Content-Length: {body_length}",
         f"Date: {get_http_date()}",
         "Server: Multi-threaded HTTP Server",
         f"Connection: {'keep-alive' if keep_alive else 'close'}"
     ]
-    
+
     if content_type:
         headers.append(f"Content-Type: {content_type}")
     else:
         headers.append("Content-Type: text/plain")
-    
+
     if keep_alive:
         headers.append("Keep-Alive: timeout=30, max=100")
-    
+
     if status_code == 503:
         headers.append("Retry-After: 30")
-    
+
     if extra_headers:
         headers.extend(extra_headers)
-    
+
     header_str = "\r\n".join(headers) + "\r\n\r\n"
-    conn.sendall(header_str.encode() + body)
-    
-    log(f"[Thread-{threading.current_thread().name}] Response: {status_code} {status_text} ({len(body)} bytes transferred)")
+    conn.sendall(header_str.encode())
+
+    if file_path is not None:
+        with open(file_path, "rb") as fp:
+            while True:
+                chunk = fp.read(8192)
+                if not chunk:
+                    break
+                conn.sendall(chunk)
+    else:
+        conn.sendall(body)
+
+    log(f"[Thread-{threading.current_thread().name}] Response: {status_code} {status_text} ({body_length} bytes transferred)")
 
 def handle_client(conn, addr):
     """Handle client connection with keep-alive support"""
@@ -310,8 +383,7 @@ def handle_client(conn, addr):
     # Update active thread count
     with THREAD_LOCK:
         ACTIVE_THREADS += 1
-        if ACTIVE_THREADS > MAX_THREADS * 0.8:
-            log(f"Thread pool status: {ACTIVE_THREADS}/{MAX_THREADS} active")
+        log(f"Thread pool status: {ACTIVE_THREADS}/{MAX_THREADS} active")
     
     try:
         log(f"[Thread-{thread_name}] Connection from {addr[0]}:{addr[1]}")
@@ -353,20 +425,33 @@ def handle_client(conn, addr):
                 
                 # Route request by method
                 if method == "GET":
-                    result = handle_get_request(conn, path, headers)
+                    response = handle_get_request(conn, path, headers)
                 elif method == "POST":
-                    result = handle_post_request(conn, path, headers, body)
+                    response = handle_post_request(conn, path, headers, body)
                 else:
-                    result = (405, "Method Not Allowed", b"405 Method Not Allowed")
-                
-                # Send response
-                if len(result) == 3:
-                    status_code, status_text, resp_body = result
-                    send_response(conn, status_code, status_text, resp_body, keep_alive=keep_alive)
-                else:
-                    status_code, status_text, resp_body, content_type, extra_headers = result
-                    send_response(conn, status_code, status_text, resp_body, 
-                                content_type, extra_headers, keep_alive)
+                    response = {
+                        "status": 405,
+                        "text": "Method Not Allowed",
+                        "body": b"405 Method Not Allowed"
+                    }
+
+                status_code = response.get("status", 500)
+                status_text = response.get("text", "Internal Server Error")
+                resp_body = response.get("body")
+                content_type = response.get("content_type")
+                extra_headers = response.get("extra_headers")
+                file_path = response.get("file_path")
+
+                send_response(
+                    conn,
+                    status_code,
+                    status_text,
+                    resp_body,
+                    content_type,
+                    extra_headers,
+                    keep_alive,
+                    file_path=file_path
+                )
                 
                 log(f"[Thread-{thread_name}] Connection: {'keep-alive' if keep_alive else 'close'}")
                 
@@ -393,6 +478,7 @@ def handle_client(conn, addr):
         # Update active thread count
         with THREAD_LOCK:
             ACTIVE_THREADS -= 1
+            log(f"Thread pool status: {ACTIVE_THREADS}/{MAX_THREADS} active")
         try:
             conn.close()
             log(f"[Thread-{thread_name}] Connection closed")
@@ -403,15 +489,25 @@ def worker():
     """Worker thread function to process connections"""
     while SERVER_RUNNING:
         try:
-            conn, addr = CONNECTION_QUEUE.get(timeout=1)
-            if conn is None:  # Shutdown signal
-                break
-            handle_client(conn, addr)
-            CONNECTION_QUEUE.task_done()
+            item = CONNECTION_QUEUE.get(timeout=1)
         except queue.Empty:
             continue
+        try:
+            conn, addr = item
+        except Exception:
+            CONNECTION_QUEUE.task_done()
+            continue
+
+        try:
+            if conn is None:  # Shutdown signal
+                break
+
+            log(f"Connection dequeued, assigned to Thread-{threading.current_thread().name} (client {addr[0]}:{addr[1]})")
+            handle_client(conn, addr)
         except Exception as e:
             log(f"Worker thread error: {e}")
+        finally:
+            CONNECTION_QUEUE.task_done()
 
 def signal_handler(signum, frame):
     """Handle shutdown signals gracefully"""
@@ -420,7 +516,10 @@ def signal_handler(signum, frame):
     SERVER_RUNNING = False
     # Add shutdown signals to queue
     for _ in range(MAX_THREADS):
-        CONNECTION_QUEUE.put((None, None))
+        try:
+            CONNECTION_QUEUE.put((None, None), timeout=1)
+        except queue.Full:
+            break
     sys.exit(0)
 
 def start_server():
@@ -439,7 +538,7 @@ def start_server():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
         server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server_socket.bind((HOST, PORT))
-        server_socket.listen(50)
+        server_socket.listen(QUEUE_MAX_SIZE)
         server_socket.settimeout(1)  # Allow periodic checking of SERVER_RUNNING
         
         log(f"HTTP Server started on http://{HOST}:{PORT}")
@@ -459,15 +558,20 @@ def start_server():
             try:
                 conn, addr = server_socket.accept()
                 
-                if CONNECTION_QUEUE.qsize() >= 50:
-                    log("Warning: Thread pool saturated, queuing connection")
-                    send_response(conn, 503, "Service Unavailable", 
-                                b"503 Service Unavailable: Server too busy")
+                if CONNECTION_QUEUE.full():
+                    log("Warning: Thread pool saturated, returning 503")
+                    send_response(conn, 503, "Service Unavailable",
+                                  b"503 Service Unavailable: Server too busy")
                     conn.close()
-                else:
-                    CONNECTION_QUEUE.put((conn, addr))
-                    if CONNECTION_QUEUE.qsize() > 5:
-                        log(f"Connection dequeued, assigned to Thread-{threading.active_count()}")
+                    continue
+
+                queue_position = CONNECTION_QUEUE.qsize() + 1
+                CONNECTION_QUEUE.put((conn, addr))
+                with THREAD_LOCK:
+                    current_active = ACTIVE_THREADS
+                if current_active >= MAX_THREADS:
+                    log("Warning: Thread pool saturated, queuing connection")
+                log(f"Queued connection from {addr[0]}:{addr[1]} (position {queue_position}/{QUEUE_MAX_SIZE})")
                         
             except socket.timeout:
                 continue

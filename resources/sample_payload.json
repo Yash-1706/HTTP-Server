@@ -1,0 +1,10 @@
+{
+  "user": "alice",
+  "timestamp": "2025-06-11T12:00:00Z",
+  "action": "upload",
+  "details": {
+    "message": "Hello HTTP server!",
+    "tags": ["demo", "assignment"],
+    "value": 42
+  }
+}

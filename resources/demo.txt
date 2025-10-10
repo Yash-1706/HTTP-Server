@@ -1,0 +1,18 @@
+Multi-threaded HTTP Server - Demo Text File
+===========================================
+
+This is a sample text file for testing binary file downloads.
+
+The server should serve this file with:
+- Content-Type: application/octet-stream
+- Content-Disposition: attachment; filename="demo.txt"
+
+This triggers a download in the browser rather than displaying the content.
+
+Features Tested:
+- Binary mode file reading
+- Proper Content-Disposition headers
+- Streaming file transfer with 8KB chunks
+- Keep-alive connection support
+
+End of file.
